@@ -37,6 +37,7 @@ async def index_channel_messages(client, message):
     count = 0
     
     try:
+        # Pyrogram iterates through chat history safely
         async for msg in client.get_chat_history(channel_id):
             caption = msg.caption or msg.text
             if caption:
@@ -55,7 +56,7 @@ async def index_channel_messages(client, message):
         
         await status_msg.edit_text(f"✅ Indexing completed! Total **{count}** stories indexed.")
     except Exception as e:
-        await status_msg.edit_text(f"❌ Error during indexing: {e}")
+        await status_msg.edit_text(f"❌ Error during indexing: `{e}`\n\n💡 Make sure the bot is added as an **Administrator** in your channel!")
 
 # Auto-index new messages in the connected channel
 @Client.on_message(filters.channel)
