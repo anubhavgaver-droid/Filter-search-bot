@@ -1,4 +1,6 @@
 import os
+import math
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database import save_custom_filter, filters_col
@@ -28,7 +30,6 @@ async def add_custom_filter(client, message):
     title = data[0].strip()
     link = data[1].strip()
 
-    # Save to database
     await save_custom_filter(title, link)
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(text=title, url=link)]])
@@ -39,7 +40,7 @@ async def add_custom_filter(client, message):
         reply_markup=keyboard
     )
 
-# 2. Import custom filters in bulk by replying to a .txt file with /import (and auto-delete file after processing)
+# 2. Import custom filters in bulk by replying to a .txt file with /import
 @Client.on_message(filters.command("import") & filters.private)
 async def import_filters_file(client, message):
     if message.from_user.id not in ADMIN_IDS:
@@ -59,13 +60,10 @@ async def import_filters_file(client, message):
     file_path = None
 
     try:
-        # Download the text file from Telegram
         file_path = await client.download_media(message.reply_to_message)
-        
         success_count = 0
         fail_count = 0
 
-        # Read file line by line
         with open(file_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
             for line in lines:
@@ -94,7 +92,6 @@ async def import_filters_file(client, message):
         await status_msg.edit_text(f"❌ Error during file import: `{e}`")
     
     finally:
-        # Automatically delete the imported file from local storage to clean up space
         if file_path and os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -110,16 +107,10 @@ async def delete_single_filter(client, message):
 
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.reply_text(
-            "⚠️ **Incorrect Format!**\n\n"
-            "Please provide the story name to delete:\n"
-            "`/delete Story Name`"
-        )
+        await message.reply_text("⚠️ Please provide the story name to delete:\n`/delete Story Name`")
         return
 
     target_title = args[1].strip()
-    
-    # Case-insensitive delete query matching exact title name
     result = await filters_col.delete_one({"title": {"$regex": f"^{target_title}$", "$options": "i"}})
 
     if result.deleted_count > 0:
@@ -134,6 +125,101 @@ async def delete_all_filters(client, message):
         await message.reply_text("⛔ You are not authorized to use this command.")
         return
 
-    # Delete all documents in custom filters collection
     result = await filters_col.delete_many({})
     await message.reply_text(f"🗑️ **All custom filters cleared!** Total `{result.deleted_count}` filters have been deleted.")
+
+# 5. List all custom filters with 10x10 Pagination in groups/private
+@Client.on_message(filters.command("filters"))
+async def list_custom_filters(client, message):
+    all_filters = await filters_col.find({}).to_list(length=None)
+    
+    if not all_filters:
+        await message.reply_text("📭 No custom filters available right now.")
+        return
+
+    items_per_page = 10
+    total_pages = math.ceil(len(all_filters) / items_per_page)
+    page = 1
+
+    # Get filters for the first page
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    page_items = all_filters[start:end]
+
+    keyboard_buttons = []
+    for item in page_items:
+        keyboard_buttons.append([InlineKeyboardButton(text=item["title"], url=item["link"])])
+
+    # Navigation buttons
+    nav_buttons = []
+    if total_pages > 1:
+        nav_buttons.append(InlineKeyboardButton(text="➡️ Next", callback_data=f"flt_page_{page+1}"))
+    
+    if nav_buttons:
+        keyboard_buttons.append(nav_buttons)
+
+    keyboard_buttons.append([InlineKeyboardButton(text=f"Page {page}/{total_pages}", callback_data="flt_noop")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard_buttons)
+    sent_msg = await message.reply_text(
+        f"📋 **Total Custom Filters:** `{len(all_filters)}`\n"
+        f"📄 **Page:** `{page}/{total_pages}`\n\n"
+        f"Click any button below to open the story:",
+        reply_markup=reply_markup
+    )
+
+    # Auto-delete message after 10 minutes (600 seconds)
+    asyncio.create_task(delete_message_after_delay(sent_msg, 600))
+
+# Callback Query Handler for Pagination
+@Client.on_callback_query(filters.regex(r"^flt_page_"))
+async def paginate_filters(client, callback_query):
+    data = callback_query.data
+    page = int(data.split("_")[2])
+
+    all_filters = await filters_col.find({}).to_list(length=None)
+    items_per_page = 10
+    total_pages = math.ceil(len(all_filters) / items_per_page)
+
+    if page < 1:
+        page = 1
+    elif page > total_pages:
+        page = total_pages
+
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    page_items = all_filters[start:end]
+
+    keyboard_buttons = []
+    for item in page_items:
+        keyboard_buttons.append([InlineKeyboardButton(text=item["title"], url=item["link"])])
+
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Back", callback_data=f"flt_page_{page-1}"))
+    if page < total_pages:
+        nav_buttons.append(InlineKeyboardButton(text="➡️ Next", callback_data=f"flt_page_{page+1}"))
+    
+    if nav_buttons:
+        keyboard_buttons.append(nav_buttons)
+
+    keyboard_buttons.append([InlineKeyboardButton(text=f"Page {page}/{total_pages}", callback_data="flt_noop")])
+
+    await callback_query.message.edit_text(
+        f"📋 **Total Custom Filters:** `{len(all_filters)}`\n"
+        f"📄 **Page:** `{page}/{total_pages}`\n\n"
+        f"Click any button below to open the story:",
+        reply_markup=InlineKeyboardMarkup(keyboard_buttons)
+    )
+    await callback_query.answer()
+
+@Client.on_callback_query(filters.regex(r"^flt_noop$"))
+async def noop_callback(client, callback_query):
+    await callback_query.answer()
+
+async def delete_message_after_delay(message, delay: int):
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except Exception:
+        pass
