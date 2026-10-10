@@ -6,19 +6,26 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database import save_custom_filter, filters_col, get_all_stories
 from config import ADMIN_IDS
 
-# 1. Add single custom filter manually using command: /filter Title - Link
+# 1. Add single custom filter with optional Photo support
 @Client.on_message(filters.command("filter") & filters.private)
 async def add_custom_filter(client, message):
     if message.from_user.id not in ADMIN_IDS:
         await message.reply_text("⛔ You are not authorized to use this command.")
         return
 
-    text_parts = message.text.split(maxsplit=1)
+    # Check if message has a photo or text command
+    caption = message.caption or message.text
+    if not caption:
+        await message.reply_text("⚠️ Please provide the filter details.")
+        return
+
+    text_parts = caption.split(maxsplit=1)
     if len(text_parts) < 2:
         await message.reply_text(
             "⚠️ **Incorrect Format!**\n\n"
-            "Please use this format:\n"
-            "`/filter Story Name - https://t.me/your_link`"
+            "Use this format:\n"
+            "`/filter Story Name - https://t.me/your_link`\n"
+            "(You can send this with a photo attached!)"
         )
         return
     
@@ -29,18 +36,27 @@ async def add_custom_filter(client, message):
 
     title = data[0].strip()
     link = data[1].strip()
+    
+    # Capture photo file_id if attached
+    photo_id = message.photo.file_id if message.photo else None
 
-    await save_custom_filter(title, link)
+    await save_custom_filter(title, link, photo_id)
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(text=title, url=link)]])
-    await message.reply_text(
-        f"✅ **Custom filter added successfully!**\n\n"
-        f"📌 **Title:** `{title}`\n"
-        f"🔗 **Link:** `{link}`",
-        reply_markup=keyboard
-    )
+    
+    if photo_id:
+        sent_msg = await message.reply_photo(
+            photo=photo_id,
+            caption=f"✅ **Custom filter with photo added successfully!**\n\n📌 **Title:** `{title}`\n🔗 **Link:** `{link}`",
+            reply_markup=keyboard
+        )
+    else:
+        sent_msg = await message.reply_text(
+            f"✅ **Custom filter added successfully!**\n\n📌 **Title:** `{title}`\n🔗 **Link:** `{link}`",
+            reply_markup=keyboard
+        )
 
-# 2. Import custom filters in bulk by replying to a .txt file with /import
+# 2. Import custom filters in bulk via .txt file
 @Client.on_message(filters.command("import") & filters.private)
 async def import_filters_file(client, message):
     if message.from_user.id not in ADMIN_IDS:
@@ -77,7 +93,7 @@ async def import_filters_file(client, message):
                 link = parts[1].strip()
 
                 if title and link:
-                    await save_custom_filter(title, link)
+                    await save_custom_filter(title, link, None)
                     success_count += 1
                 else:
                     fail_count += 1
@@ -98,7 +114,7 @@ async def import_filters_file(client, message):
             except Exception:
                 pass
 
-# 3. Delete a specific custom filter by name: /delete Story Name
+# 3. Delete specific filter: /delete Story Name
 @Client.on_message(filters.command("delete") & filters.private)
 async def delete_single_filter(client, message):
     if message.from_user.id not in ADMIN_IDS:
@@ -128,12 +144,11 @@ async def delete_all_filters(client, message):
     result = await filters_col.delete_many({})
     await message.reply_text(f"🗑️ **All custom filters cleared!** Total `{result.deleted_count}` filters have been deleted.")
 
-# Helper function to get combined items (Channel Stories + Custom Filters)
+# Helper for combined list
 async def get_all_combined_items():
     channel_stories = await get_all_stories()
     custom_filters = await filters_col.find({}).to_list(length=None)
     
-    # Combine both lists (avoiding duplicates based on title if necessary)
     seen_titles = set()
     combined = []
     
@@ -145,7 +160,7 @@ async def get_all_combined_items():
             
     return combined
 
-# 5. List all filters and channel stories with 10x10 Pagination
+# 5. /filters command with Pagination
 @Client.on_message(filters.command("filters"))
 async def list_custom_filters(client, message):
     all_items = await get_all_combined_items()
@@ -185,7 +200,6 @@ async def list_custom_filters(client, message):
 
     asyncio.create_task(delete_message_after_delay(sent_msg, 600))
 
-# Callback Query Handler for Pagination
 @Client.on_callback_query(filters.regex(r"^flt_page_"))
 async def paginate_filters(client, callback_query):
     data = callback_query.data
