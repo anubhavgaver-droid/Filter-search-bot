@@ -4,7 +4,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from rapidfuzz import process, fuzz
 from database import get_all_stories, get_all_custom_filters
 
-@Client.on_message(filters.text & ~filters.command(["connect", "index", "start", "filter", "import"]))
+@Client.on_message(filters.text & ~filters.command(["connect", "index", "start", "filter", "import", "delete", "deleteall", "filters"]))
 async def search_handler(client, message):
     # Convert user query to lowercase for case-insensitive matching
     query = message.text.strip().lower()
