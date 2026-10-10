@@ -3,7 +3,7 @@ import math
 import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from database import save_custom_filter, filters_col
+from database import save_custom_filter, filters_col, get_all_stories
 from config import ADMIN_IDS
 
 # 1. Add single custom filter manually using command: /filter Title - Link
@@ -128,29 +128,44 @@ async def delete_all_filters(client, message):
     result = await filters_col.delete_many({})
     await message.reply_text(f"🗑️ **All custom filters cleared!** Total `{result.deleted_count}` filters have been deleted.")
 
-# 5. List all custom filters with 10x10 Pagination in groups/private
+# Helper function to get combined items (Channel Stories + Custom Filters)
+async def get_all_combined_items():
+    channel_stories = await get_all_stories()
+    custom_filters = await filters_col.find({}).to_list(length=None)
+    
+    # Combine both lists (avoiding duplicates based on title if necessary)
+    seen_titles = set()
+    combined = []
+    
+    for item in channel_stories + custom_filters:
+        title_lower = item["title"].lower()
+        if title_lower not in seen_titles:
+            seen_titles.add(title_lower)
+            combined.append(item)
+            
+    return combined
+
+# 5. List all filters and channel stories with 10x10 Pagination
 @Client.on_message(filters.command("filters"))
 async def list_custom_filters(client, message):
-    all_filters = await filters_col.find({}).to_list(length=None)
+    all_items = await get_all_combined_items()
     
-    if not all_filters:
-        await message.reply_text("📭 No custom filters available right now.")
+    if not all_items:
+        await message.reply_text("📭 No stories or filters available right now.")
         return
 
     items_per_page = 10
-    total_pages = math.ceil(len(all_filters) / items_per_page)
+    total_pages = math.ceil(len(all_items) / items_per_page)
     page = 1
 
-    # Get filters for the first page
     start = (page - 1) * items_per_page
     end = start + items_per_page
-    page_items = all_filters[start:end]
+    page_items = all_items[start:end]
 
     keyboard_buttons = []
     for item in page_items:
         keyboard_buttons.append([InlineKeyboardButton(text=item["title"], url=item["link"])])
 
-    # Navigation buttons
     nav_buttons = []
     if total_pages > 1:
         nav_buttons.append(InlineKeyboardButton(text="➡️ Next", callback_data=f"flt_page_{page+1}"))
@@ -162,13 +177,12 @@ async def list_custom_filters(client, message):
 
     reply_markup = InlineKeyboardMarkup(keyboard_buttons)
     sent_msg = await message.reply_text(
-        f"📋 **Total Custom Filters:** `{len(all_filters)}`\n"
+        f"📋 **Total Available Stories/Filters:** `{len(all_items)}`\n"
         f"📄 **Page:** `{page}/{total_pages}`\n\n"
         f"Click any button below to open the story:",
         reply_markup=reply_markup
     )
 
-    # Auto-delete message after 10 minutes (600 seconds)
     asyncio.create_task(delete_message_after_delay(sent_msg, 600))
 
 # Callback Query Handler for Pagination
@@ -177,9 +191,9 @@ async def paginate_filters(client, callback_query):
     data = callback_query.data
     page = int(data.split("_")[2])
 
-    all_filters = await filters_col.find({}).to_list(length=None)
+    all_items = await get_all_combined_items()
     items_per_page = 10
-    total_pages = math.ceil(len(all_filters) / items_per_page)
+    total_pages = math.ceil(len(all_items) / items_per_page)
 
     if page < 1:
         page = 1
@@ -188,7 +202,7 @@ async def paginate_filters(client, callback_query):
 
     start = (page - 1) * items_per_page
     end = start + items_per_page
-    page_items = all_filters[start:end]
+    page_items = all_items[start:end]
 
     keyboard_buttons = []
     for item in page_items:
@@ -206,7 +220,7 @@ async def paginate_filters(client, callback_query):
     keyboard_buttons.append([InlineKeyboardButton(text=f"Page {page}/{total_pages}", callback_data="flt_noop")])
 
     await callback_query.message.edit_text(
-        f"📋 **Total Custom Filters:** `{len(all_filters)}`\n"
+        f"📋 **Total Available Stories/Filters:** `{len(all_items)}`\n"
         f"📄 **Page:** `{page}/{total_pages}`\n\n"
         f"Click any button below to open the story:",
         reply_markup=InlineKeyboardMarkup(keyboard_buttons)
