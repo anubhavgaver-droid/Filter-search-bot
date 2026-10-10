@@ -3,7 +3,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from rapidfuzz import process, fuzz
 from database import get_all_stories
 
-@Client.on_message(filters.text & ~filters.command(["connect", "index", "start", "filter"]))
+@Client.on_message(filters.text & ~filters.command(["connect", "index", "start", "filter", "import"]))
 async def search_handler(client, message):
     query = message.text.strip()
     if query.startswith("/"):
