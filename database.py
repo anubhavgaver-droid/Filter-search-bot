@@ -15,7 +15,7 @@ async def save_story(data):
     )
 
 async def get_all_stories():
-    return await stories_col.find({}.to_list(length=None) if hasattr(stories_col.find({}), 'to_list') else await stories_col.find({}).to_list(length=None))
+    return await stories_col.find({}).to_list(length=None)
 
 async def save_custom_filter(title, link, photo_id=None):
     await filters_col.update_one(
