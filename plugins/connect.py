@@ -2,8 +2,30 @@ import re
 import time
 import asyncio
 from pyrogram import Client, filters
-from database import set_channel_id, get_channel_id, save_story
+from database import set_channel_id, get_channel_id, save_story, stories_col
 from config import ADMIN_IDS
+
+# Title cleaner function to strip all trailing/leading emojis and symbols
+def clean_story_title(raw_title: str) -> str:
+    if not raw_title:
+        return ""
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        "\U0002600-\U00026FF"    # Miscellaneous Symbols
+        "\U0002700-\U00027BF"    # Dingbats
+        "\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
+        "\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
+        "\u200d"                 # Zero Width Joiner
+        "\ufe0f"                 # Variation Selector
+        "]+", 
+        flags=re.UNICODE
+    )
+    clean_title = emoji_pattern.sub("", raw_title).strip()
+    return clean_title
 
 # Connect Channel Command (Admin Only)
 @Client.on_message(filters.command("connect") & filters.private)
@@ -23,7 +45,7 @@ async def connect_channel(client, message):
     except Exception as e:
         await message.reply_text(f"❌ Error: {e}")
 
-# Advanced Batch Indexing Command with Live Progress & Stats
+# Advanced Batch Indexing Command with Emoji Auto-Cleaning
 @Client.on_message(filters.command("index") & filters.private)
 async def index_channel_messages(client, message):
     if message.from_user.id not in ADMIN_IDS:
@@ -66,7 +88,7 @@ async def index_channel_messages(client, message):
         failed_count = 0
         missing_count = 0
 
-        chunk_size = 50  # Fetching 50 messages per batch to avoid overload
+        chunk_size = 50
         message_ids = list(range(start_id, end_id + 1))
         processed = 0
 
@@ -78,28 +100,32 @@ async def index_channel_messages(client, message):
                 for msg in messages:
                     processed += 1
                     if msg is None:
-                        missing_count += 1  # Deleted or missing message
+                        missing_count += 1
                         continue
 
                     caption = msg.caption or msg.text
                     if caption:
                         match = re.search(r"Story\s*:\s*(.*?)\s*(?=Status\s*:|$)", caption, re.IGNORECASE | re.DOTALL)
                         if match:
-                            title = match.group(1).strip()
-                            story_data = {
-                                "message_id": msg.id,
-                                "chat_id": msg.chat.id,
-                                "title": title,
-                                "link": msg.link
-                            }
-                            await save_story(story_data)
-                            success_count += 1
+                            raw_title = match.group(1).strip()
+                            clean_title = clean_story_title(raw_title)
+                            
+                            if clean_title:
+                                story_data = {
+                                    "message_id": msg.id,
+                                    "chat_id": msg.chat.id,
+                                    "title": clean_title,
+                                    "link": msg.link
+                                }
+                                await save_story(story_data)
+                                success_count += 1
+                            else:
+                                failed_count += 1
                         else:
-                            failed_count += 1  # Format did not match
+                            failed_count += 1
                     else:
-                        missing_count += 1  # No text/caption available
+                        missing_count += 1
 
-                # Update live status after each batch
                 elapsed_time = time.time() - start_time
                 percent = (processed / total_messages) * 100
                 
@@ -112,7 +138,7 @@ async def index_channel_messages(client, message):
                     f"⏱️ Elapsed Time: `{int(elapsed_time)} seconds`"
                 )
                 
-                await asyncio.sleep(1) # Small delay to prevent Telegram FloodWait
+                await asyncio.sleep(1)
 
             except Exception as batch_err:
                 print(f"Batch Error: {batch_err}")
@@ -131,7 +157,18 @@ async def index_channel_messages(client, message):
     except Exception as e:
         await message.reply_text(f"❌ Critical error during indexing: `{e}`")
 
-# Auto-index new messages in the connected channel
+# Clear All Indexed Channel Stories Command: /clearall
+@Client.on_message(filters.command("clearall") & filters.private)
+async def clear_all_indexed_stories(client, message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.reply_text("⛔ You are not authorized to use this command.")
+        return
+
+    # Delete all documents from the stories collection
+    result = await stories_col.delete_many({})
+    await message.reply_text(f"🗑️ **All indexed stories cleared!** Total `{result.deleted_count}` indexed stories have been deleted from the database.")
+
+# Auto-index new messages in connected channel with Emoji Cleaning
 @Client.on_message(filters.channel)
 async def auto_index_new_post(client, message):
     channel_id = await get_channel_id()
@@ -140,11 +177,13 @@ async def auto_index_new_post(client, message):
         if caption:
             match = re.search(r"Story\s*:\s*(.*?)\s*(?=Status\s*:|$)", caption, re.IGNORECASE | re.DOTALL)
             if match:
-                title = match.group(1).strip()
-                story_data = {
-                    "message_id": message.id,
-                    "chat_id": message.chat.id,
-                    "title": title,
-                    "link": message.link
-                }
-                await save_story(story_data)
+                raw_title = match.group(1).strip()
+                clean_title = clean_story_title(raw_title)
+                if clean_title:
+                    story_data = {
+                        "message_id": message.id,
+                        "chat_id": message.chat.id,
+                        "title": clean_title,
+                        "link": message.link
+                    }
+                    await save_story(story_data)
