@@ -15,9 +15,8 @@ async def save_story(data):
     )
 
 async def get_all_stories():
-    return await stories_col.find({}).to_list(length=None)
+    return await stories_col.find({}.to_list(length=None) if hasattr(stories_col.find({}), 'to_list') else await stories_col.find({}).to_list(length=None))
 
-# Save custom filter with photo file_id support
 async def save_custom_filter(title, link, photo_id=None):
     await filters_col.update_one(
         {"title": {"$regex": f"^{title}$", "$options": "i"}},
@@ -28,13 +27,20 @@ async def save_custom_filter(title, link, photo_id=None):
 async def get_all_custom_filters():
     return await filters_col.find({}).to_list(length=None)
 
-async def set_channel_id(chat_id):
+# Multiple Channels Database Functions
+async def add_connected_channel(chat_id):
     await settings_col.update_one(
-        {"_id": "config"},
-        {"$set": {"channel_id": chat_id}},
+        {"_id": "connected_channels"},
+        {"$addToSet": {"ids": chat_id}},
         upsert=True
     )
 
-async def get_channel_id():
-    res = await settings_col.find_one({"_id": "config"})
-    return res["channel_id"] if res else None
+async def remove_connected_channel(chat_id):
+    await settings_col.update_one(
+        {"_id": "connected_channels"},
+        {"$pull": {"ids": chat_id}}
+    )
+
+async def get_connected_channels():
+    res = await settings_col.find_one({"_id": "connected_channels"})
+    return res["ids"] if res and "ids" in res else []
