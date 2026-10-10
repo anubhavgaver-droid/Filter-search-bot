@@ -1,19 +1,28 @@
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from rapidfuzz import process, fuzz
-from database import get_all_stories
+from database import get_all_stories, get_all_custom_filters
 
 @Client.on_message(filters.text & ~filters.command(["connect", "index", "start", "filter", "import"]))
 async def search_handler(client, message):
-    query = message.text.strip()
+    # Convert user query to lowercase for case-insensitive matching
+    query = message.text.strip().lower()
     if query.startswith("/"):
         return
 
-    all_stories = await get_all_stories()
-    if not all_stories:
-        return  # यदि डेटाबेस खाली है, तो बोट पूरी तरह साइलेंट रहेगा
+    # Fetch both channel stories and manual custom filters
+    channel_stories = await get_all_stories()
+    custom_filters = await get_all_custom_filters()
 
-    titles = [s["title"] for s in all_stories]
+    all_items = channel_stories + custom_filters
+
+    if not all_items:
+        return  # Keep silent if no data exists
+
+    # Create a mapping of lowercase title to original item
+    title_map = {item["title"].lower(): item for item in all_items}
+    titles = list(title_map.keys())
     
     # RapidFuzz search matching top results
     results = process.extract(query, titles, scorer=fuzz.WRatio, limit=3)
@@ -21,22 +30,53 @@ async def search_handler(client, message):
     exact_matches = []
     suggestions = []
 
-    for title, score, index in results:
+    for lower_title, score, index in results:
+        original_item = title_map[titles[index]]
         if score >= 85:
-            exact_matches.append(all_stories[index])
+            exact_matches.append(original_item)
         elif score >= 55:  # "Did you mean?" suggestions range
-            suggestions.append((all_stories[index], score))
+            suggestions.append((original_item, score))
+
+    sent_message = None
 
     if exact_matches:
-        buttons = [[InlineKeyboardButton(text=item["title"], url=item["link"])] for item in exact_matches]
-        await message.reply_text(f"🔍 **Search results for '{query}':**", reply_markup=InlineKeyboardMarkup(buttons))
+        seen = set()
+        unique_matches = []
+        for item in exact_matches:
+            if item["title"] not in seen:
+                seen.add(item["title"])
+                unique_matches.append(item)
+
+        buttons = [[InlineKeyboardButton(text=item["title"], url=item["link"])] for item in unique_matches]
+        sent_message = await message.reply_text(
+            f"🔍 **Search results for '{message.text.strip()}':**", 
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
     
     elif suggestions:
-        buttons = [[InlineKeyboardButton(text=item["title"], url=item["link"])] for item, score in suggestions]
-        await message.reply_text(
+        seen = set()
+        unique_suggestions = []
+        for item, score in suggestions:
+            if item["title"] not in seen:
+                seen.add(item["title"])
+                unique_suggestions.append(item)
+
+        buttons = [[InlineKeyboardButton(text=item["title"], url=item["link"])] for item in unique_suggestions]
+        sent_message = await message.reply_text(
             f"🤔 Exact match not found. Did you mean one of these?", 
             reply_markup=InlineKeyboardMarkup(buttons)
         )
     else:
-        # यदि मैसेज पूरी तरह आउट ऑफ कॉन्टेक्स्ट है, तो बोट कोई रिप्लाई नहीं देगा (बिल्कुल साइलेंट रहेगा)
+        # Out of context / no match -> remain completely silent
         return
+
+    # Automatically delete the result message after 10 minutes (600 seconds)
+    if sent_message:
+        asyncio.create_task(delete_message_after_delay(sent_message, 600))
+
+async def delete_message_after_delay(message, delay: int):
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except Exception:
+        pass
