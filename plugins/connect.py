@@ -5,27 +5,31 @@ from pyrogram import Client, filters
 from database import set_channel_id, get_channel_id, save_story, stories_col
 from config import ADMIN_IDS
 
+
 # Title cleaner function to strip all trailing/leading emojis and symbols
 def clean_story_title(raw_title: str) -> str:
     if not raw_title:
         return ""
+    
+    # Raw string (r"...") used to avoid unicode escape errors
     emoji_pattern = re.compile(
-        "["
-        "\U0001F600-\U0001F64F"  # emoticons
-        "\U0001F300-\U0001F5FF"  # symbols & pictographs
-        "\U0001F680-\U0001F6FF"  # transport & map symbols
-        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
-        "\U0002600-\U00026FF"    # Miscellaneous Symbols
-        "\U0002700-\U00027BF"    # Dingbats
-        "\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
-        "\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
-        "\u200d"                 # Zero Width Joiner
-        "\ufe0f"                 # Variation Selector
-        "]+", 
+        r"["
+        r"\U0001F600-\U0001F64F"  # emoticons
+        r"\U0001F300-\U0001F5FF"  # symbols & pictographs
+        r"\U0001F680-\U0001F6FF"  # transport & map symbols
+        r"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        r"\u2600-\u26FF"        # Miscellaneous Symbols
+        r"\u2700-\u27BF"        # Dingbats
+        r"\U0001F900-\U0001F9FF"  # Supplemental Symbols and Pictographs
+        r"\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
+        r"\u200d"                 # Zero Width Joiner
+        r"\ufe0f"                 # Variation Selector
+        r"]+", 
         flags=re.UNICODE
     )
     clean_title = emoji_pattern.sub("", raw_title).strip()
     return clean_title
+
 
 # Connect Channel Command (Admin Only)
 @Client.on_message(filters.command("connect") & filters.private)
