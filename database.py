@@ -4,10 +4,9 @@ from config import MONGO_URL
 client = AsyncIOMotorClient(MONGO_URL)
 db = client["story_search_bot_db"]
 stories_col = db["stories"]
-filters_col = db["custom_filters"]  # Collection for manual filters
+filters_col = db["custom_filters"]
 settings_col = db["settings"]
 
-# Save channel indexed stories
 async def save_story(data):
     await stories_col.update_one(
         {"message_id": data["message_id"], "chat_id": data["chat_id"]},
@@ -18,18 +17,17 @@ async def save_story(data):
 async def get_all_stories():
     return await stories_col.find({}).to_list(length=None)
 
-# Save manual custom filters
-async def save_custom_filter(title, link):
+# Save custom filter with photo file_id support
+async def save_custom_filter(title, link, photo_id=None):
     await filters_col.update_one(
         {"title": {"$regex": f"^{title}$", "$options": "i"}},
-        {"$set": {"title": title, "link": link}},
+        {"$set": {"title": title, "link": link, "photo": photo_id}},
         upsert=True
     )
 
 async def get_all_custom_filters():
     return await filters_col.find({}).to_list(length=None)
 
-# Channel ID settings
 async def set_channel_id(chat_id):
     await settings_col.update_one(
         {"_id": "config"},
