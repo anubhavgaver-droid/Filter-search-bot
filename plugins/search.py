@@ -6,7 +6,9 @@ from database import get_all_stories, get_all_custom_filters
 
 @Client.on_message(filters.text & ~filters.command(["connect", "index", "start", "filter", "import", "filters", "delete", "deleteall"]))
 async def search_handler(client, message):
-    query = message.text.strip().lower()
+    raw_query = message.text.strip()
+    query = raw_query.lower()
+    
     if query.startswith("/"):
         return
 
@@ -15,67 +17,61 @@ async def search_handler(client, message):
 
     all_items = channel_stories + custom_filters
     if not all_items:
-        return  # Keep silent if no database data
+        return  # Data absent -> remain silent
 
-    title_map = {item["title"].lower(): item for item in all_items}
-    titles = list(title_map.keys())
-    
-    results = process.extract(query, titles, scorer=fuzz.WRatio, limit=3)
-    
-    exact_matches = []
-    suggestions = []
-
-    for lower_title, score, index in results:
-        original_item = title_map[titles[index]]
-        if score >= 85:
-            exact_matches.append(original_item)
-        elif score >= 55:
-            suggestions.append((original_item, score))
+    # Map lowercased title to original item
+    title_map = {}
+    for item in all_items:
+        title_lower = item["title"].lower()
+        if title_lower not in title_map:
+            title_map[title_lower] = item
 
     sent_message = None
 
-    if exact_matches:
-        seen = set()
-        unique_matches = []
-        for item in exact_matches:
-            if item["title"] not in seen:
-                seen.add(item["title"])
-                unique_matches.append(item)
-
-        buttons = [[InlineKeyboardButton(text=item["title"], url=item["link"])] for item in unique_matches]
+    # STEP 1: Strict Exact Match Check (Case-Insensitive)
+    if query in title_map:
+        exact_item = title_map[query]
+        buttons = [[InlineKeyboardButton(text=exact_item["title"], url=exact_item["link"])]]
         markup = InlineKeyboardMarkup(buttons)
         
-        # Check if the top match has an attached photo (custom filter photo support)
-        top_item = unique_matches[0]
-        photo_id = top_item.get("photo")
-
+        photo_id = exact_item.get("photo")
         if photo_id:
             sent_message = await message.reply_photo(
                 photo=photo_id,
-                caption=f"🔍 **Search results for '{message.text.strip()}':**",
+                caption=f"🔍 **Search Result:**",
                 reply_markup=markup
             )
         else:
             sent_message = await message.reply_text(
-                f"🔍 **Search results for '{message.text.strip()}':**", 
+                f"🔍 **Search Result:**", 
                 reply_markup=markup
             )
-    
-    elif suggestions:
-        seen = set()
-        unique_suggestions = []
-        for item, score in suggestions:
-            if item["title"] not in seen:
-                seen.add(item["title"])
-                unique_suggestions.append(item)
 
-        buttons = [[InlineKeyboardButton(text=item["title"], url=item["link"])] for item in unique_suggestions]
-        sent_message = await message.reply_text(
-            f"🤔 Exact match not found. Did you mean one of these?", 
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
+    # STEP 2: Fuzzy Matching (Did You Mean) if exact match fails
     else:
-        return
+        titles = list(title_map.keys())
+        results = process.extract(query, titles, scorer=fuzz.WRatio, limit=3)
+        
+        suggestions = []
+        for lower_title, score, index in results:
+            if score >= 60:  # Threshold for partial matches/typos
+                suggestions.append(title_map[titles[index]])
+
+        if suggestions:
+            seen = set()
+            unique_suggestions = []
+            for item in suggestions:
+                if item["title"] not in seen:
+                    seen.add(item["title"])
+                    unique_suggestions.append(item)
+
+            buttons = [[InlineKeyboardButton(text=item["title"], url=item["link"])] for item in unique_suggestions]
+            sent_message = await message.reply_text(
+                f"🤔 Exact match not found. Did you mean one of these?", 
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+        else:
+            return  # No relevant match -> remain completely silent
 
     # Auto-delete search response after 10 minutes (600 seconds)
     if sent_message:
