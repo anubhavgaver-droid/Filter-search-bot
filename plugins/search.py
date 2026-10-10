@@ -4,7 +4,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from rapidfuzz import process, fuzz
 from database import get_all_stories, get_all_custom_filters
 
-@Client.on_message(filters.text & ~filters.command(["connect", "index", "start", "filter", "import", "filters", "delete", "deleteall"]))
+@Client.on_message(filters.text & ~filters.command(["connect", "index", "start", "filter", "import", "filters", "delete", "deleteall", "clearall"]))
 async def search_handler(client, message):
     raw_query = message.text.strip()
     query = raw_query.lower()
