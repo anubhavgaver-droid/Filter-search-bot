@@ -9,4 +9,4 @@ MONGO_URL = os.getenv("MONGO_URL", "your_mongodb_connection_string")
 PORT = int(os.getenv("PORT", 8080))
 
 # Admin Telegram User IDs (केवल ये एडमिन ही /connect और /index कमांड चला सकेंगे)
-ADMIN_IDS = [123456789]  # अपनी टेलीग्राम यूजर आईडी यहाँ डालें
+ADMIN_IDS = [5898522531]  # अपनी टेलीग्राम यूजर आईडी यहाँ डालें
