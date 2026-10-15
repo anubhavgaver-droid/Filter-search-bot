@@ -1,62 +1,74 @@
 import os
 import math
 import asyncio
+import re
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database import save_custom_filter, filters_col, get_all_stories
 from config import ADMIN_IDS
 
-# 1. Add single custom filter with optional Photo support
-@Client.on_message(filters.command("filter") & filters.private)
-async def add_custom_filter(client, message):
+# Helper function to get message link in groups or channels
+def get_message_link(message):
+    if message.chat.username:
+        return f"https://t.me/{message.chat.username}/{message.id}"
+    else:
+        # For private or supergroups with -100 prefix
+        chat_id_str = str(message.chat.id).replace("-100", "")
+        return f"https://t.me/c/{chat_id_str}/{message.id}"
+
+# 1. Add custom filter via Reply: /filter "Story Name"
+@Client.on_message(filters.command("filter"))
+async def add_custom_filter_by_reply(client, message):
     if message.from_user.id not in ADMIN_IDS:
         await message.reply_text("⛔ You are not authorized to use this command.")
         return
 
-    # Check if message has a photo or text command
-    caption = message.caption or message.text
-    if not caption:
-        await message.reply_text("⚠️ Please provide the filter details.")
-        return
-
-    text_parts = caption.split(maxsplit=1)
-    if len(text_parts) < 2:
+    # Check if user replied to a message
+    if not message.reply_to_message:
         await message.reply_text(
-            "⚠️ **Incorrect Format!**\n\n"
-            "Use this format:\n"
-            "`/filter Story Name - https://t.me/your_link`\n"
-            "(You can send this with a photo attached!)"
+            "⚠️ **Incorrect Usage!**\n\n"
+            "Please **reply** to any message/photo with:\n"
+            "`/filter \"Your Story Name\"`"
         )
         return
-    
-    data = text_parts[1].split("-")
-    if len(data) < 2:
-        await message.reply_text("⚠️ Please separate the story name and link with a hyphen (-).")
+
+    # Extract name inside double quotes using regex
+    match = re.search(r'"([^"]+)"', message.text)
+    if not match:
+        await message.reply_text(
+            "⚠️ **Please provide the story name inside double quotes!**\n"
+            "Example: `/filter \"Shadi By Mistake\"`"
+        )
         return
 
-    title = data[0].strip()
-    link = data[1].strip()
+    title = match.group(1).strip()
+    target_msg = message.reply_to_message
     
-    # Capture photo file_id if attached
-    photo_id = message.photo.file_id if message.photo else None
+    # Generate link of the replied message
+    link = get_message_link(target_msg)
+    
+    # Capture photo file_id if the replied message has a photo
+    photo_id = target_msg.photo.file_id if target_msg.photo else None
 
+    # Save to database
     await save_custom_filter(title, link, photo_id)
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(text=title, url=link)]])
     
     if photo_id:
-        sent_msg = await message.reply_photo(
+        await client.send_photo(
+            chat_id=message.chat.id,
             photo=photo_id,
-            caption=f"✅ **Custom filter with photo added successfully!**\n\n📌 **Title:** `{title}`\n🔗 **Link:** `{link}`",
+            caption=f"✅ **Custom filter added successfully via reply!**\n\n📌 **Title:** `{title}`\n🔗 **Link:** `{link}`",
             reply_markup=keyboard
         )
     else:
-        sent_msg = await message.reply_text(
-            f"✅ **Custom filter added successfully!**\n\n📌 **Title:** `{title}`\n🔗 **Link:** `{link}`",
+        await message.reply_text(
+            f"✅ **Custom filter added successfully via reply!**\n\n📌 **Title:** `{title}`\n🔗 **Link:** `{link}`",
             reply_markup=keyboard
         )
 
-# 2. Import custom filters in bulk via .txt file
+# 2. Import custom filters in bulk by replying to a .txt file with /import
 @Client.on_message(filters.command("import") & filters.private)
 async def import_filters_file(client, message):
     if message.from_user.id not in ADMIN_IDS:
@@ -118,31 +130,31 @@ async def import_filters_file(client, message):
 @Client.on_message(filters.command("delete") & filters.private)
 async def delete_single_filter(client, message):
     if message.from_user.id not in ADMIN_IDS:
-        await message.reply_text("⛔ You are not authorized to use this command.")
+        await message.reply_text("⛔ You are not authorized.")
         return
 
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.reply_text("⚠️ Please provide the story name to delete:\n`/delete Story Name`")
+        await message.reply_text("⚠️ Please provide the story name:\n`/delete Story Name`")
         return
 
     target_title = args[1].strip()
     result = await filters_col.delete_one({"title": {"$regex": f"^{target_title}$", "$options": "i"}})
 
     if result.deleted_count > 0:
-        await message.reply_text(f"🗑️ Custom filter **'{target_title}'** has been deleted successfully.")
+        await message.reply_text(f"🗑️ Filter **'{target_title}'** deleted successfully.")
     else:
-        await message.reply_text(f"❌ No custom filter found with the name **'{target_title}'**.")
+        await message.reply_text(f"❌ No filter found with name **'{target_title}'**.")
 
 # 4. Delete all custom filters: /deleteall
 @Client.on_message(filters.command("deleteall") & filters.private)
 async def delete_all_filters(client, message):
     if message.from_user.id not in ADMIN_IDS:
-        await message.reply_text("⛔ You are not authorized to use this command.")
+        await message.reply_text("⛔ You are not authorized.")
         return
 
     result = await filters_col.delete_many({})
-    await message.reply_text(f"🗑️ **All custom filters cleared!** Total `{result.deleted_count}` filters have been deleted.")
+    await message.reply_text(f"🗑️ All custom filters cleared! Total `{result.deleted_count}` deleted.")
 
 # Helper for combined list
 async def get_all_combined_items():
@@ -160,7 +172,7 @@ async def get_all_combined_items():
             
     return combined
 
-# 5. /filters command with Pagination
+# 5. /filters command with Pagination (Works in Groups & Private)
 @Client.on_message(filters.command("filters"))
 async def list_custom_filters(client, message):
     all_items = await get_all_combined_items()
