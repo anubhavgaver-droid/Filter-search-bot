@@ -108,40 +108,46 @@ async def index_channel_messages(client, message):
         total_messages = (end_id - start_id) + 1
         status_msg = await message.reply_text(f"🚀 Indexing started for channel `{channel_id}`... Total: {total_messages}")
 
-        start_time = time.time()
         success_count = 0
         failed_count = 0
         missing_count = 0
 
         chunk_size = 50
         message_ids = list(range(start_id, end_id + 1))
-        processed = 0
 
         for i in range(0, len(message_ids), chunk_size):
             chunk = message_ids[i:i + chunk_size]
             try:
                 messages = await client.get_messages(channel_id, chunk)
                 for msg in messages:
-                    processed += 1
                     if msg is None:
                         missing_count += 1
                         continue
 
                     caption = msg.caption or msg.text
                     if caption:
-                        match = re.search(r"Story\s*:\s*(.*?)\s*(?=Status\s*:|$)", caption, re.IGNORECASE | re.DOTALL)
-                        if match:
-                            clean_title = clean_story_title(match.group(1).strip())
-                            if clean_title:
-                                await save_story({
-                                    "message_id": msg.id,
-                                    "chat_id": msg.chat.id,
-                                    "title": clean_title,
-                                    "link": msg.link
-                                })
-                                success_count += 1
-                            else:
-                                failed_count += 1
+                        # Public/Private hashtag or title matching support
+                        match = re.search(r"(?:Story|Title)\s*[:\-]\s*(.*?)(?=#public|#private|\n|$)", caption, re.IGNORECASE | re.DOTALL)
+                        if not match:
+                            # Fallback: पहली लाइन को ही टाइटल मान ले अगर फॉर्मेट मैच न हो
+                            lines = caption.strip().split("\n")
+                            raw_title = lines[0] if lines else ""
+                        else:
+                            raw_title = match.group(1).strip()
+
+                        clean_title = clean_story_title(raw_title)
+                        if clean_title:
+                            # Check whether it is public or private based on hashtags
+                            is_private = "#private" in caption.lower()
+                            
+                            await save_story({
+                                "message_id": msg.id,
+                                "chat_id": msg.chat.id,
+                                "title": clean_title,
+                                "link": msg.link,
+                                "is_private": is_private
+                            })
+                            success_count += 1
                         else:
                             failed_count += 1
                     else:
@@ -177,13 +183,21 @@ async def auto_index_new_post(client, message):
     if message.chat.id in connected_channels:
         caption = message.caption or message.text
         if caption:
-            match = re.search(r"Story\s*:\s*(.*?)\s*(?=Status\s*:|$)", caption, re.IGNORECASE | re.DOTALL)
-            if match:
-                clean_title = clean_story_title(match.group(1).strip())
-                if clean_title:
-                    await save_story({
-                        "message_id": message.id,
-                        "chat_id": message.chat.id,
-                        "title": clean_title,
-                        "link": message.link
-                    })
+            match = re.search(r"(?:Story|Title)\s*[:\-]\s*(.*?)(?=#public|#private|\n|$)", caption, re.IGNORECASE | re.DOTALL)
+            if not match:
+                lines = caption.strip().split("\n")
+                raw_title = lines[0] if lines else ""
+            else:
+                raw_title = match.group(1).strip()
+
+            clean_title = clean_story_title(raw_title)
+            if clean_title:
+                is_private = "#private" in caption.lower()
+                
+                await save_story({
+                    "message_id": message.id,
+                    "chat_id": message.chat.id,
+                    "title": clean_title,
+                    "link": message.link,
+                    "is_private": is_private
+                })
